@@ -102,3 +102,17 @@ def midi_cosine_similarity(split1, split2):
             similarity[i][j] = cosine_similarity(barX.reshape(1,-1), barY.reshape(1,-1))[0][0] # 속도가 느림.. 개선 필요
 
     return similarity
+
+def key_transform_12(mf):
+    """
+    마디 단위로 나눠진 파일을 입력 받아 12개 키로 변조된 파일을 반환합니다.
+    """
+
+    pass
+
+def get_chords(df):
+    """
+    마디 단위로 나눠진 파일을 입력 받아 각 마디에서 추정된 코드를 반환합니다.
+    """
+
+    pass
