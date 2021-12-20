@@ -40,11 +40,12 @@ def convert_numpy_midi(mf: music21.midi.MidiFile) -> np.ndarray:
     return npLists
 
 
-def open_midi(file_path: str) -> music21.midi.MidiFile:
+def open_midi(file_path: str, stream: bool = False) -> music21.midi.MidiFile:
     """
     music21 midiFile을 입력받아서 이를 numpy 형태로 변환한 뒤, 한 마디 단위로 분할하여 유사도를 비교할 수 있게 합니다.
     <입력>
     file_path: str ".midi"로 끝나는 확장자
+    stream: boolean. stream 형태로 불러오는지 설정합니다. 
 
     <출력>
     music21 midiFile
@@ -55,7 +56,11 @@ def open_midi(file_path: str) -> music21.midi.MidiFile:
         mf.open(file_path) # 파싱 준비
         mf.read() # 파싱과 스트림
         mf.close() # 파일 메모리 분리
-        return mf
+
+        if stream:
+            return midi.translate.midiFileToStream(mf)
+        else:
+            return mf
     except Exception as e:
         print(f"Error on Loading Midi file! : {e}")
         
@@ -103,6 +108,7 @@ def midi_cosine_similarity(split1, split2):
 
     return similarity
 
+def convert
 def key_transform_12(mf):
     """
     마디 단위로 나눠진 파일을 입력 받아 12개 키로 변조된 파일을 반환합니다.
