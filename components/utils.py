@@ -27,29 +27,39 @@ def load_as_np(path:str, beat_resolution:int=4, lowest_pitch:int=24, n_pitches:i
     else:
         score = pypianoroll.read(path)
 
-    # score.binarize() # 이진화 실시(어떤 이점이 있는지 모르겠습니다.)
-    score.set_resolution(beat_resolution) # 비트당 틱을 재설정합니다.
+    # 키 변환 후 저장
+    totalScore = []
+    for key in range(-5, 7): # 아래로 5개, 위로 6개 키 변환 실시
 
-    # 넘파이 배열로 변경합니다.
-    pianoroll = (score.stack() > 0) # .stack() -> (track, time, pitch)
+        tmp = score.copy() # 원본 손상 방지를 위해 복사 후 저장
+        trans = tmp.transpose(key) # 해당 키로 전환 실시
+        
+        # score.binarize() # 이진화 실시(어떤 이점이 있는지 모르겠습니다.)
+        trans.set_resolution(beat_resolution) # 비트당 틱을 재설정합니다.
 
-    # 주어진 피치범위로 잘라냅니다.
-    pianoroll = pianoroll[:, :, lowest_pitch:lowest_pitch+n_pitches] # (track, time, 피치 수)
+        # 넘파이 배열로 변경합니다.
+        pianoroll = (trans.stack() > 0) # .stack() -> (track, time, pitch)
 
-    # 전체 마디 수를 계산합니다.
-    measure_resolution = 4 * beat_resolution # 한 마디는 4박이기 때문에 마디당 틱 수를 계산할 수 있습니다.
-    n_measures = score.get_max_length() // measure_resolution
+        # 주어진 피치범위로 잘라냅니다.
+        pianoroll = pianoroll[:, :, lowest_pitch:lowest_pitch+n_pitches] # (track, time, 피치 수)
 
-    # 마디별로 배열을 잘라서 저장합니다.
-    split = []
-    for i in range(0, n_measures, measure_resolution):
-        split.append(pianoroll[:, i:i+measure_resolution, :])
+        # 전체 마디 수를 계산합니다.
+        measure_resolution = 4 * beat_resolution # 한 마디는 4박이기 때문에 마디당 틱 수를 계산할 수 있습니다.
+        n_measures = trans.get_max_length() // measure_resolution
 
-    
-    return np.stack(split) # shape: (마디, 트랙, 틱, 피치)
+        # 마디별로 배열을 잘라서 저장합니다.
+        split = []
+        for i in range(0, n_measures, measure_resolution):
+            split.append(pianoroll[:, i:i+measure_resolution, :])
 
 
- def concat_midi(score1:pypianoroll.Multitrack, pos1: int, score2:pypianoroll.Multitrack, pos2:int, pad:int=2)->pypianoroll.Multitrack:
+        totalScore.append(np.stack(split)) # shape: (마디, 트랙, 틱, 피치)
+
+
+    return np.concatenate(totalScore) # shape: (마디 * 12, 트랙, 틱, 피치)
+
+
+def concat_midi(score1:pypianoroll.Multitrack, pos1: int, score2:pypianoroll.Multitrack, pos2:int, pad:int=2)->pypianoroll.Multitrack:
     """
     pypianoroll 형식 파일 두 개를 받아서 두 지점을 이어 새로운 미디 파일로 만듭니다.
     score1은 먼저 나온 뒤 pos1 지점에서 끊기고, score2의 pos2지점에서 이어서 나옵니다.
