@@ -8,7 +8,7 @@ pypianoroll 을 사용해서 파일을 불러오는 유틸리티 파일입니다
 def load_as_np(path:str, beat_resolution:int=4, lowest_pitch:int=24, n_pitches:int=72)->np.ndarray:
     """
     pypianoroll 형식으로 npz 또는 midi 파일을 불러와서 마디별로 분할된 넘파이 형식으로 반환합니다.
-
+    과정 중에 키 변환을 수행하여 12키를 모두 지원하는 상태로 불러옵니다.
     입력
     ----------
     path:str 파일 주소를 나타내는 패스 .npz 또는 .mid로 끝나야 함
@@ -18,7 +18,7 @@ def load_as_np(path:str, beat_resolution:int=4, lowest_pitch:int=24, n_pitches:i
 
     출력
     ----------
-    마디 별로 분할된 넘파이 배열
+    마디와 키 별로 분할된 넘파이 배열
     shape : (마디, 트랙, 마디당 틱, 피치)
     """
 
@@ -97,8 +97,30 @@ def concat_midi(score1:pypianoroll.Multitrack, pos1: int, score2:pypianoroll.Mul
 
     return score1_tmp, score2_tmp # 이 두개를 연결할 수 있는 방법이 없을지 살펴볼 필요성이 있다.
 
+def to_midi(target:np.ndarray, original:pypianoroll.Multitrack, dest:str="output.mid", tempo=100)->None:
+    """
+    넘파이 배열을 입력 받아서 미디 파일로 변환합니다.
+    numpy 배열은 기존 Multitrack의 stack() 형태이며, 미디 변환 시 기타 정보(악기이름, 템포 등)을 얻기 위해 원본 멀티트랙도 같이 입력 받습니다.
 
+    입력
+    ----------
+    target: 미디로 변환하고자 할 넘파이 배열
+    original: 미디 파일을 만드는 데 참고하는 멀티트랙 파일
+    dest: 생성하고자 하는 파일 주소. 기본값 : output.mid
+    tempo: 템포 정보, 기본값 100
+    """
 
+    tempo_array = np.full((target.shape[1],1), tempo) # 템포 어레이 생성. 생성하고자 하는 길이만큼 해당 템포로 가득 채웁니다.
+
+    tracks = [] # StandardTrack을 저장하기 위한 배열
+    for t, track in enumerate(original.tracks): # 각각의 트랙을 반복하며 StandardTrack으로 변환
+        tracks.append(pypianoroll.StandardTrack(is_drum=(track.name == "Drums"), name=track.name, program=track.program, pianoroll=target[t]))
+
+    # 이제 Track이 나왔으니 MultiTrack으로 변환 가능
+    new_score = pypianoroll.Multitrack(tracks=tracks, resolution=original.resolution, tempo=tempo_array)
+
+    # 작성한 Multitrack을 미디로 변환해서 저장합니다.
+    pypianoroll.write(dest, new_score)
 
 
 
