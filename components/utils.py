@@ -1,14 +1,18 @@
 import numpy as np
 import pypianoroll
-
+import sys
+from scipy.spatial import distance
+from .util import *
+from .const import *
 """
 pypianoroll 을 사용해서 파일을 불러오는 유틸리티 파일입니다.
 """
 
+
+
 def load_as_np(path:str, beat_resolution:int=4, lowest_pitch:int=24, n_pitches:int=72)->np.ndarray:
     """
     pypianoroll 형식으로 npz 또는 midi 파일을 불러와서 마디별로 분할된 넘파이 형식으로 반환합니다.
-    과정 중에 키 변환을 수행하여 12키를 모두 지원하는 상태로 불러옵니다.
     입력
     ----------
     path:str 파일 주소를 나타내는 패스 .npz 또는 .mid로 끝나야 함
@@ -22,41 +26,40 @@ def load_as_np(path:str, beat_resolution:int=4, lowest_pitch:int=24, n_pitches:i
     shape : (마디, 트랙, 마디당 틱, 피치)
     """
 
-    if path[:-3] == 'npz':
+    if path[-3:] == 'npz' :
         score = pypianoroll.load(path)
     else:
         score = pypianoroll.read(path)
 
-    # 키 변환 후 저장
-    totalScore = []
-    for key in range(-5, 7): # 아래로 5개, 위로 6개 키 변환 실시
-
-        tmp = score.copy() # 원본 손상 방지를 위해 복사 후 저장
-        trans = tmp.transpose(key) # 해당 키로 전환 실시
-        
-        # score.binarize() # 이진화 실시(어떤 이점이 있는지 모르겠습니다.)
-        trans.set_resolution(beat_resolution) # 비트당 틱을 재설정합니다.
-
-        # 넘파이 배열로 변경합니다.
-        pianoroll = (trans.stack() > 0) # .stack() -> (track, time, pitch)
-
-        # 주어진 피치범위로 잘라냅니다.
-        pianoroll = pianoroll[:, :, lowest_pitch:lowest_pitch+n_pitches] # (track, time, 피치 수)
-
-        # 전체 마디 수를 계산합니다.
-        measure_resolution = 4 * beat_resolution # 한 마디는 4박이기 때문에 마디당 틱 수를 계산할 수 있습니다.
-        n_measures = trans.get_max_length() // measure_resolution
-
-        # 마디별로 배열을 잘라서 저장합니다.
-        split = []
-        for i in range(0, n_measures, measure_resolution):
-            split.append(pianoroll[:, i:i+measure_resolution, :])
 
 
-        totalScore.append(np.stack(split)) # shape: (마디, 트랙, 틱, 피치)
+    tmp = score.copy() # 원본 손상 방지를 위해 복사 후 저장
+    tmp.binarize()
+    tmp.set_resolution(beat_resolution) # 비트당 틱을 재설정합니다.
 
+    # 넘파이 배열로 변경합니다.
+    pianoroll = (tmp.stack() > 0)
+    # 주어진 피치범위로 잘라냅니다.
+    pianoroll = pianoroll[:, :, lowest_pitch:lowest_pitch+n_pitches] # (track, time, 피치 수)
 
-    return np.concatenate(totalScore) # shape: (마디 * 12, 트랙, 틱, 피치)
+    # 전체 마디 수를 계산합니다.
+    measure_resolution = 4 * beat_resolution # 한 마디는 4박이기 때문에 마디당 틱 수를 계산할 수 있습니다.
+    n_measures = tmp.get_max_length() // measure_resolution
+    sample = np.zeros((n_tracks, pianoroll.shape[1], pianoroll.shape[2]))
+    for i, track in enumerate(tmp):
+        try:
+            track_idx = track_names_lower.index(track.name.strip().lower())
+        except:
+            continue
+        sample[track_idx] = pianoroll[i, :]
+
+    # 마디별로 배열을 잘라서 저장합니다.
+    split = []
+    for i in range(0, n_measures):
+        split.append(sample[:, i*measure_resolution:(i+1)*measure_resolution, :])
+
+    return np.stack(split)
+
 
 
 def concat_midi(score1:pypianoroll.Multitrack, pos1: int, score2:pypianoroll.Multitrack, pos2:int, pad:int=2)->pypianoroll.Multitrack:
@@ -124,4 +127,191 @@ def to_midi(target:np.ndarray, original:pypianoroll.Multitrack, dest:str="output
 
 
 
+
+def get_index(midi:np.ndarray) ->np.ndarray :
+    """
+    pypianoroll 형식으로 불러온 midi 파일의 경우 bool 형태의 구조를 가집니다. (해당 pitch의 값에 대해 true / false)
+    마디별 유사도를 구하기 위해 pitch 값을 지정해줍니다. 
+    ex. (0번째 마디, 0번째 track, time 0에 대해 4번째 pitch가 true 인 경우)
+    [0,0,0,1,···,0] -> [0,0,0,4,···,0]
+
+    입력
+    ----------
+    midi: .midi, .npz 를 변환한 numpy array
+
+    출력
+    ----------
+    pitch 값들이 변경된 numpy array
+    shape : (마디, 트랙, 마디당 틱, 피치)
+    """
+
+    get_midi_idx = np.argwhere(midi==1)   
+    
+    for idx_ in get_midi_idx :
+        b, tr, t, p = idx_
+        
+        midi[b,tr,t,p] = p+1
+        
+    return midi
+
+
+def dtw(midi1:np.ndarray,midi2:np.ndarray , norm_func:object = np.linalg.norm):
+    """
+    pypianoroll 형식으로 불러온 midi 파일의 유사도를 구하기 위한 함수입니다.
+    Dynamic Time warping을 이용하여 두개의 midi 파일의 마디에 대한 유사도를 구합니다. 
+
+    입력
+    ----------
+    midi1: .midi, .npz 를 변환한 numpy array
+    midi2: .midi, .npz 를 변환한 numpy array
+    norm_func: 거리를 구하기 위한 함수 default = Euclidean Distance, L2 norm
+
+    출력
+    ----------
+    float, 마디에 대한 유사도
+    """
+
+    matrix = np.zeros((len(midi1) + 1, len(midi2) + 1))
+    matrix[0,:] = np.inf
+    matrix[:,0] = np.inf
+    matrix[0,0] = 0
+    for i, vec1 in enumerate(midi1):
+        for j, vec2 in enumerate(midi2):
+            cost = norm_func(vec1 - vec2)
+            matrix[i + 1, j + 1] = cost + min(matrix[i, j + 1], matrix[i + 1, j], matrix[i, j])
+    matrix = matrix[1:,1:]
+
+    return matrix[-1,-1]
+
+def js_similarity_matrix(midi1:np.ndarray,midi2:np.ndarray, dist_func:object = distance.jensenshannon):
+    """
+    pypianoroll 형식으로 불러온 midi 파일의 유사도를 구하기 위한 함수입니다.
+    "비슷한 마디는 비슷한 분포를 가지고 있을 것이다." 라는 가정을 하고 
+    마디 마다 분포를 구하여 분포 간의 유사도를 구합니다.
+    KL-Divergence의 경우 분포가 겹치는 경우 0, 겹치지 않는 경우 무한대로 발산하기 때문에 Jensen–Shannon divergence를 사용함
+
+    입력
+    ----------
+    midi1: .midi, .npz 를 변환한 numpy array
+    midi2: .midi, .npz 를 변환한 numpy array
+    dist_func: 거리를 구하기 위한 함수 default = Jensen–Shannon divergence
+    출력
+    ----------
+    distance matrix, 마디들에 대한 유사도
+    """
+    # Calculate probability
+    probability_midi1 = []
+    probability_midi2 = []
+    for i, values in enumerate(midi1):
+        freq = np.histogram(values)
+        prob = np.asarray(freq[0]) / sum(freq[0])
+        for ix, x in enumerate(prob):
+            if x == 0:
+                prob[ix] = sys.float_info.epsilon
+
+        probability_midi1.append(prob)
+        
+    for i, values in enumerate(midi2):
+        freq = np.histogram(values)
+        prob = np.asarray(freq[0]) / sum(freq[0])
+        for ix, x in enumerate(prob):
+            if x == 0:
+                prob[ix] = sys.float_info.epsilon
+
+        probability_midi2.append(prob)
+
+
+    # shape
+    dist_mx = np.zeros((midi1.shape[0], midi2.shape[0]), dtype=np.float32)
+
+    for idx1,bar1 in enumerate(probability_midi1):
+        for idx2,bar2 in enumerate(probability_midi2):
+            kl = dist_func(bar1,bar2)  
+            rescale_kl = 1 / (1 +kl)
+            dist_mx[idx1, idx2] = rescale_kl
+    return dist_mx
+
+
+def get_dtw_similairy(path1:str,path2:str) ->tuple :
+    """
+    pypianoroll 형식으로 불러온 midi 파일의 유사도를 구하기 위한 함수입니다.
+    Dynamic Time warping을 이용하여 두개의 midi 파일의 마디에 대한 유사도를 구하여 후보 index를 출력합니다.
+
+    입력
+    ----------
+    midi1: .midi, .npz 를 변환한 numpy array
+    midi2: .midi, .npz 를 변환한 numpy array
+    출력
+    ----------
+    tuple, 유사도가 높은 마디들의 index
+    """
+    
+    song1, song2 = load_as_np(path=path1), load_as_np(path=path2)
+
+    tr_song1, tr_song2 = get_index(song1), get_index(song2)
+
+    similarity = np.full((len(tr_song1), len(tr_song2), tr_song1.shape[1]),fill_value=np.inf)
+    candidate_dict = dict()
+
+    for track in range(tr_song1.shape[1]) : 
+        for idx1, bar1 in enumerate(tr_song1) : 
+            for idx2, bar2 in enumerate(tr_song2) :
+                try : 
+                    if bar1[track].mean() == 0. or bar2[track].mean() == 0 :
+                        continue
+                    else :
+                        score = dtw(bar1[track], bar2[track])
+                        similarity[idx1,idx2,track] = score
+                except :
+                    continue
+
+    for track in range(5) :
+        for i,j in np.squeeze(np.dstack(np.unravel_index(np.argsort(similarity[:,:,track].ravel()), (len(tr_song1), len(tr_song2)))),axis = 0) :
+            if (i,j) not in candidate_dict :
+                candidate_dict[(i,j)] = 0    
+            if similarity[i,j,track] == np.inf :
+                continue
+            else :
+                candidate_dict[(i,j)] += similarity[i,j,track]/5
+    
+    candidate_dict = dict([(idx,np.inf) if v == 0 else (idx,v) for idx,v in candidate_dict.items()])
+    candidate_dict = sorted([items for items in candidate_dict.items()], key=lambda x: x[1])
+
+    return candidate_dict[:10]
+
+def get_distribution_similairy(path1:str,path2:str) ->tuple :
+
+    """
+    pypianoroll 형식으로 불러온 midi 파일의 유사도를 구하기 위한 함수입니다.
+    Jensen–Shannon divergence을 이용하여 두개의 midi 파일의 마디에 대한 유사도를 구하여 후보 index를 출력합니다.
+
+    입력
+    ----------
+    midi1: .midi, .npz 를 변환한 numpy array
+    midi2: .midi, .npz 를 변환한 numpy array
+    출력
+    ----------
+    tuple, 유사도가 높은 마디들의 index
+    """
+
+    song1, song2 = load_as_np(path=path1), load_as_np(path=path2)
+
+    tr_song1, tr_song2 = get_index(song1), get_index(song2)
+    similarity = np.zeros((len(tr_song1), len(tr_song2), len(track_names)), dtype = np.float32)
+    candidate_dict = dict()
+    for track in range(len(track_names)) :
+        track_sim = js_similarity_matrix(tr_song1[:,track,:,:], tr_song2[:,track,:,:])
+        track_sim = np.where(track_sim == 1, 0, track_sim)
+        similarity[:,:,track] = track_sim
+
+    for track in range(5) :
+        for i,j in np.squeeze(np.dstack(np.unravel_index(np.argsort(similarity[:,:,track].ravel()), (len(tr_song1), len(tr_song2)))),axis = 0)[::-1] :
+            if (i,j) not in candidate_dict :
+                candidate_dict[(i,j)] = 0    
+            if similarity[i,j,track] == 0 :
+                continue
+            else :
+                candidate_dict[(i,j)] += similarity[i,j,track]/5
+    candidate_dict = sorted([items for items in candidate_dict.items()], key=lambda x: -x[1])
+    return candidate_dict[:10]
 

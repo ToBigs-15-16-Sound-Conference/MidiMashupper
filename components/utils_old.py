@@ -116,7 +116,7 @@ def key_transform_12(mf):
 
     pass
 
-def get_pitches(s: music21.Stream):
+def get_pitches(s: music21.stream):
     """
     마디 단위로 나눠진 파일을 입력 받아 각 마디에서 추정된 코드를 반환합니다.
     <입력>
