@@ -298,11 +298,16 @@ def get_distribution_similairy(path1:str,path2:str) ->tuple :
 
     tr_song1, tr_song2 = get_index(song1), get_index(song2)
     similarity = np.zeros((len(tr_song1), len(tr_song2), len(track_names)), dtype = np.float32)
+
+    for i in range(similarity.shape[0]-1,-1,-1) :
+        for j in range(similarity.shape[1]) :
+            similarity[i,j, :] = (i/similarity.shape[0] * (similarity.shape[1]-j-1)/similarity.shape[1]) /10 
+        
     candidate_dict = dict()
     for track in range(len(track_names)) :
         track_sim = js_similarity_matrix(tr_song1[:,track,:,:], tr_song2[:,track,:,:])
         track_sim = np.where(track_sim == 1, 0, track_sim)
-        similarity[:,:,track] = track_sim
+        similarity[:,:,track] += track_sim
 
     for track in range(5) :
         for i,j in np.squeeze(np.dstack(np.unravel_index(np.argsort(similarity[:,:,track].ravel()), (len(tr_song1), len(tr_song2)))),axis = 0)[::-1] :
